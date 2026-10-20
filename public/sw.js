@@ -1,12 +1,12 @@
 const CACHE_NAME = 'voicelingo-v1';
 const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
-  '/public/icon.svg',
-  '/public/pwa-192x192.png',
-  '/public/pwa-512x512.png',
-  '/public/apple-touch-icon.png',
-  '/public/manifest.json'
+  './',
+  './index.html',
+  './icon.svg',
+  './pwa-192x192.png',
+  './pwa-512x512.png',
+  './apple-touch-icon.png',
+  './manifest.json'
 ];
 
 self.addEventListener('install', (event) => {
