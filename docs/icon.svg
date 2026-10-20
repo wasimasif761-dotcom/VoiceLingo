@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="50%" stop-color="#1e1b4b" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4" />
+      <stop offset="100%" stop-color="#10b981" />
+    </linearGradient>
+    <linearGradient id="waveGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#818cf8" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="128" fill="url(#bgGrad)" />
+
+  <!-- Outer Soundwaves -->
+  <g opacity="0.35" stroke="url(#cyanGrad)" stroke-width="6" fill="none" stroke-linecap="round">
+    <path d="M 120 180 A 150 150 0 0 0 120 332" />
+    <path d="M 90 140 A 200 200 0 0 0 90 372" />
+    <path d="M 392 180 A 150 150 0 0 1 392 332" />
+    <path d="M 422 140 A 200 200 0 0 1 422 372" />
+  </g>
+
+  <!-- Central Glow Ring -->
+  <circle cx="256" cy="256" r="160" fill="none" stroke="url(#cyanGrad)" stroke-width="4" opacity="0.25" />
+
+  <!-- Stylized Microphone Capsule -->
+  <g filter="url(#glow)">
+    <!-- Mic Body -->
+    <rect x="226" y="150" width="60" height="110" rx="30" fill="url(#cyanGrad)" />
+    
+    <!-- Mic Stand Arc -->
+    <path d="M 196 230 C 196 295, 316 295, 316 230" fill="none" stroke="#f8fafc" stroke-width="12" stroke-linecap="round" />
+    <!-- Mic Stem -->
+    <path d="M 256 292 L 256 345" stroke="#f8fafc" stroke-width="12" stroke-linecap="round" />
+    <!-- Mic Base -->
+    <path d="M 216 345 L 296 345" stroke="#f8fafc" stroke-width="12" stroke-linecap="round" />
+
+    <!-- Mic Mesh Line Details -->
+    <line x1="234" y1="190" x2="278" y2="190" stroke="#0f172a" stroke-width="3" stroke-linecap="round" opacity="0.5" />
+    <line x1="238" y1="210" x2="274" y2="210" stroke="#0f172a" stroke-width="3" stroke-linecap="round" opacity="0.5" />
+  </g>
+
+  <!-- Voice & Translation Accents: Urdu & English Typography Badges -->
+  <g transform="translate(140, 110)">
+    <circle cx="0" cy="0" r="28" fill="#1e293b" stroke="#06b6d4" stroke-width="3" />
+    <text x="0" y="9" font-family="system-ui, sans-serif" font-size="22" font-weight="bold" fill="#38bdf8" text-anchor="middle">A</text>
+  </g>
+  <g transform="translate(372, 110)">
+    <circle cx="0" cy="0" r="28" fill="#1e293b" stroke="#10b981" stroke-width="3" />
+    <text x="0" y="8" font-family="system-ui, sans-serif" font-size="22" font-weight="bold" fill="#34d399" text-anchor="middle">اردو</text>
+  </g>
+
+  <!-- Sound Wave Frequency Bars underneath -->
+  <g fill="url(#cyanGrad)" opacity="0.9">
+    <rect x="180" y="380" width="8" height="24" rx="4" />
+    <rect x="200" y="372" width="8" height="40" rx="4" />
+    <rect x="220" y="364" width="8" height="56" rx="4" />
+    <rect x="240" y="356" width="8" height="72" rx="4" />
+    <rect x="260" y="356" width="8" height="72" rx="4" />
+    <rect x="280" y="364" width="8" height="56" rx="4" />
+    <rect x="300" y="372" width="8" height="40" rx="4" />
+    <rect x="320" y="380" width="8" height="24" rx="4" />
+  </g>
+</svg>
