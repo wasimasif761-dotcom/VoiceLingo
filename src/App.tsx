@@ -172,26 +172,35 @@ export default function App() {
     }
   }, [sourceText, isRecording]);
 
-  // Handle Start Recording (continuous speech-to-text + audio capture)
-  const handleStartRecording = async () => {
+  const recordingTimerRef = useRef<any>(null);
+
+  // Handle Start Recording (continuous speech-to-text)
+  const handleStartRecording = () => {
     try {
       // Clear interim
       setInterimText('');
       setRecordingSeconds(0);
 
-      // Start Web Audio recording & visualizer
-      const activeAnalyser = await audioRecorderRef.current.startRecording((secs) => {
-        setRecordingSeconds(secs);
-      });
-      setAnalyser(activeAnalyser);
+      // Start recording timer
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+      }
+      const startTime = Date.now();
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds(Math.floor((Date.now() - startTime) / 1000));
+      }, 1000);
 
-      // Start SpeechRecognition
+      // 1. Start SpeechRecognition SYNCHRONOUSLY within direct user tap
       if (voiceRecognitionRef.current) {
+        if (!voiceRecognitionRef.current.isSupported()) {
+          showToast('براؤزر میں وائس ریکگنیشن سپورٹڈ نہیں ہے۔ Google Chrome استعمال کریں (Use Google Chrome)', 'error');
+          return;
+        }
         voiceRecognitionRef.current.setInitialTranscript(sourceText);
         voiceRecognitionRef.current.start(sourceLang);
       }
       setIsRecording(true);
-      showToast('Listening... Speak continuously in ' + LANGUAGES[sourceLang].name, 'info');
+      showToast('سن رہا ہے... بولنا شروع کریں (' + LANGUAGES[sourceLang].name + ')', 'info');
     } catch (err: any) {
       console.error(err);
       showToast(err.message || 'Microphone error', 'error');
@@ -200,20 +209,19 @@ export default function App() {
   };
 
   // Handle Stop Recording
-  const handleStopRecording = async () => {
+  const handleStopRecording = () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+
     if (voiceRecognitionRef.current) {
       voiceRecognitionRef.current.stop();
     }
-    const audioData = await audioRecorderRef.current.stopRecording();
     setAnalyser(null);
     setIsRecording(false);
     setInterimText('');
-
-    if (audioData.blob && audioData.url) {
-      setRecordedAudioBlob(audioData.blob);
-      setRecordedAudioUrl(audioData.url);
-      showToast('Voice recorded! You can now translate or share on WhatsApp.', 'success');
-    }
+    showToast('آواز محفوظ ہو گئی! اب ترجمہ کریں (Voice captured! Ready to translate)', 'success');
   };
 
   // Language Swap
@@ -226,9 +234,17 @@ export default function App() {
 
   // Translate Action
   const handleTranslate = async () => {
-    const textToTranslate = sourceText.trim();
+    let textToTranslate = sourceText.trim();
+    if (isRecording) {
+      if (interimText.trim()) {
+        textToTranslate = (textToTranslate ? `${textToTranslate} ${interimText.trim()}` : interimText.trim()).trim();
+        setSourceText(textToTranslate);
+      }
+      handleStopRecording();
+    }
+
     if (!textToTranslate) {
-      showToast('Please speak or type some text first to translate.', 'info');
+      showToast('پہلے بولیں یا کوئی ٹیکسٹ لکھیں تاکہ ترجمہ ہو سکے (Speak or type text first)', 'info');
       return;
     }
 
@@ -547,19 +563,25 @@ export default function App() {
             {/* Editable Textarea with live interim speech preview */}
             <div className="relative flex-1 min-h-[160px] sm:min-h-[200px]">
               <textarea
-                value={sourceText}
+                value={
+                  isRecording && interimText
+                    ? sourceText
+                      ? `${sourceText} ${interimText}`
+                      : interimText
+                    : sourceText
+                }
                 onChange={(e) => setSourceText(e.target.value)}
                 dir={currentSourceInfo.isRtl ? 'rtl' : 'ltr'}
                 placeholder={currentSourceInfo.placeholder}
                 className={`w-full h-full bg-transparent resize-none text-white text-base sm:text-lg focus:outline-none placeholder-slate-600 leading-relaxed ${currentSourceInfo.fontClass}`}
               />
-              {/* Interim voice recognition text overlay if active */}
-              {interimText && (
-                <div
-                  dir={currentSourceInfo.isRtl ? 'rtl' : 'ltr'}
-                  className={`mt-1 text-sm text-cyan-400/90 italic ${currentSourceInfo.fontClass}`}
-                >
-                  ... {interimText}
+              {/* Active Listening indicator badge */}
+              {isRecording && (
+                <div className="absolute bottom-2 right-2 flex items-center gap-2 bg-slate-950/95 border border-rose-500/50 px-3 py-1 rounded-full text-xs shadow-lg backdrop-blur-md animate-in fade-in">
+                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
+                  <span className="text-rose-300 font-medium">
+                    {interimText ? interimText : 'سن رہا ہے... بولیں (Listening...)'}
+                  </span>
                 </div>
               )}
             </div>

@@ -36,6 +36,14 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
           dataArray = new Uint8Array(bufferLength);
         }
         analyser.getByteFrequencyData(dataArray);
+      } else if (isRecording) {
+        // Dynamic live pulse when actively listening/recording
+        const time = Date.now() * 0.008;
+        for (let i = 0; i < dataArray.length; i++) {
+          dataArray[i] = Math.floor(
+            80 + 70 * Math.sin(time + i * 0.4) + 50 * Math.cos(time * 0.6 + i * 0.25)
+          );
+        }
       } else if (isPlaying) {
         // Simulated harmonic wave when speaking
         const time = Date.now() * 0.005;

@@ -2,9 +2,9 @@ import { LanguageCode } from '../types';
 import { LANGUAGES } from './languages';
 
 /**
- * High-Speed Online Translation via MyMemory Public API
+ * High-Speed Online Translation via Google Neural Translate API (Tier 1)
  */
-async function fetchOnlineTranslation(
+async function fetchGoogleTranslate(
   text: string,
   srcLang: LanguageCode,
   tgtLang: LanguageCode
@@ -13,7 +13,87 @@ async function fetchOnlineTranslation(
     const srcCode = srcLang === 'ur-roman' ? 'ur' : srcLang;
     const tgtCode = tgtLang === 'ur-roman' ? 'ur' : tgtLang;
 
-    // Convert Roman Urdu to standard Urdu script before sending to machine translation
+    // Convert Roman Urdu to standard Urdu script before sending
+    const queryText = srcLang === 'ur-roman' ? romanUrduToUrduScript(text) : text;
+
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${srcCode}&tl=${tgtCode}&dt=t&q=${encodeURIComponent(
+      queryText.trim()
+    )}`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeout);
+
+    if (!res.ok) return '';
+    const data = await res.json();
+
+    if (Array.isArray(data) && Array.isArray(data[0])) {
+      const fullText = data[0]
+        .map((segment: any) => (Array.isArray(segment) ? segment[0] || '' : ''))
+        .join('');
+
+      if (fullText && fullText.trim()) {
+        if (tgtLang === 'ur-roman') {
+          return urduScriptToRomanUrdu(fullText);
+        }
+        return fullText;
+      }
+    }
+    return '';
+  } catch (e) {
+    return '';
+  }
+}
+
+/**
+ * Online Translation via Lingva Mirror (Tier 2)
+ */
+async function fetchLingvaTranslate(
+  text: string,
+  srcLang: LanguageCode,
+  tgtLang: LanguageCode
+): Promise<string> {
+  try {
+    const srcCode = srcLang === 'ur-roman' ? 'ur' : srcLang;
+    const tgtCode = tgtLang === 'ur-roman' ? 'ur' : tgtLang;
+    const queryText = srcLang === 'ur-roman' ? romanUrduToUrduScript(text) : text;
+
+    const url = `https://lingva.ml/api/v1/${srcCode}/${tgtCode}/${encodeURIComponent(queryText.trim())}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeout);
+
+    if (!res.ok) return '';
+    const data = await res.json();
+    const translation = data?.translation;
+
+    if (translation && typeof translation === 'string') {
+      if (tgtLang === 'ur-roman') {
+        return urduScriptToRomanUrdu(translation);
+      }
+      return translation;
+    }
+    return '';
+  } catch (e) {
+    return '';
+  }
+}
+
+/**
+ * Online Translation via MyMemory API (Tier 3)
+ */
+async function fetchMyMemoryTranslate(
+  text: string,
+  srcLang: LanguageCode,
+  tgtLang: LanguageCode
+): Promise<string> {
+  try {
+    const srcCode = srcLang === 'ur-roman' ? 'ur' : srcLang;
+    const tgtCode = tgtLang === 'ur-roman' ? 'ur' : tgtLang;
     const queryText = srcLang === 'ur-roman' ? romanUrduToUrduScript(text) : text;
 
     const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(
@@ -57,9 +137,9 @@ export async function translateText(
   const clean = text.trim();
   if (!clean || srcLang === tgtLang) return clean;
 
-  onStatus?.('Translating...');
+  onStatus?.('ترجمہ جاری ہے (Translating)...');
 
-  // 1. Direct phrasebook lookup (Fastest & 100% accurate offline)
+  // 1. Direct phrasebook lookup (Fastest & 100% accurate)
   const directMatch = lookupPhraseDictionary(clean, srcLang, tgtLang);
   if (directMatch) {
     return directMatch;
@@ -73,20 +153,33 @@ export async function translateText(
     return urduScriptToRomanUrdu(clean);
   }
 
-  // 3. Try online translation
+  // 3. Online Machine Translation Tiers (Tier 1 -> Tier 2 -> Tier 3)
   if (navigator.onLine) {
-    const onlineResult = await fetchOnlineTranslation(clean, srcLang, tgtLang);
-    if (onlineResult && onlineResult.trim() && onlineResult.toLowerCase() !== clean.toLowerCase()) {
-      return onlineResult;
+    // Try Google Translate
+    const googleResult = await fetchGoogleTranslate(clean, srcLang, tgtLang);
+    if (googleResult && googleResult.trim() && googleResult.toLowerCase() !== clean.toLowerCase()) {
+      return googleResult;
+    }
+
+    // Try Lingva Mirror
+    const lingvaResult = await fetchLingvaTranslate(clean, srcLang, tgtLang);
+    if (lingvaResult && lingvaResult.trim() && lingvaResult.toLowerCase() !== clean.toLowerCase()) {
+      return lingvaResult;
+    }
+
+    // Try MyMemory
+    const myMemoryResult = await fetchMyMemoryTranslate(clean, srcLang, tgtLang);
+    if (myMemoryResult && myMemoryResult.trim() && myMemoryResult.toLowerCase() !== clean.toLowerCase()) {
+      return myMemoryResult;
     }
   }
 
-  // 4. Offline Smart Lexicon fallback
+  // 4. Offline Smart Lexicon & Phrase Fallback
   return fallbackSmartTranslate(clean, srcLang, tgtLang);
 }
 
 /**
- * Comprehensive Phrasebook for 100% accurate greetings and daily conversations
+ * Comprehensive Phrasebook for 100% accurate common phrases & greetings
  */
 export const PHRASE_DICTIONARY: Array<{
   en: string;
@@ -311,12 +404,6 @@ export const PHRASE_DICTIONARY: Array<{
     ar: 'أين تعيش؟',
   },
   {
-    en: 'I am learning new languages with VoiceLingo.',
-    ur: 'میں وائس لنگو سے نئی زبانیں سیکھ رہا ہوں۔',
-    'ur-roman': 'Main VoiceLingo se nayi zabanain seekh raha hoon.',
-    ar: 'أنا أتعلم لغات جديدة عبر فويس لينغو.',
-  },
-  {
     en: 'Peace be upon you',
     ur: 'السلام علیکم',
     'ur-roman': 'Assalam-o-Alaikum',
@@ -349,7 +436,7 @@ function lookupPhraseDictionary(text: string, srcLang: LanguageCode, tgtLang: La
 }
 
 /**
- * Word vocabulary for tokenized fallback
+ * Word vocabulary for offline fallback tokenization
  */
 const VOCABULARY: Record<string, { ur: string; 'ur-roman': string; ar: string; en: string }> = {
   water: { en: 'water', ur: 'پانی', 'ur-roman': 'paani', ar: 'ماء' },
@@ -420,7 +507,7 @@ export function fallbackSmartTranslate(
 
   // Tokenized translation attempt
   const words = clean.split(/(\s+|[.,!?،؟])/);
-  let translatedWords = words.map((w) => {
+  const translatedWords = words.map((w) => {
     const stripped = w.toLowerCase().trim();
     if (!stripped) return w;
 
@@ -581,7 +668,6 @@ export function romanUrduToUrduScript(roman: string): string {
     'paanch': 'پانچ',
   };
 
-  // Replace words that match wordMap
   const tokens = s.split(/(\s+|[.,!?،؟])/);
   const mappedTokens = tokens.map((t) => {
     const low = t.toLowerCase().trim();
@@ -595,27 +681,61 @@ export function romanUrduToUrduScript(roman: string): string {
  * Phonetic mapper for Urdu Script to Roman Urdu
  */
 export function urduScriptToRomanUrdu(urdu: string): string {
-  const map: Record<string, string> = {
-    'السلام علیکم': 'Assalam-o-Alaikum',
-    'شکریہ': 'Shukriya',
+  if (!urdu || !urdu.trim()) return '';
+
+  // 1. Common Phrases
+  const phraseMap: Array<[string, string]> = [
+    ['السلام علیکم', 'Assalam-o-Alaikum'],
+    ['وعلیکم السلام', 'Walaikum Assalam'],
+    ['خوش آمدید', 'Khush Amdeed'],
+    ['اللہ حافظ', 'Allah Hafiz'],
+    ['انشاء اللہ', 'Inshallah'],
+    ['ماشاء اللہ', 'Mashallah'],
+    ['الحمد للہ', 'Alhamdulillah'],
+    ['صبح بخیر', 'Subah bakhair'],
+    ['شام بخیر', 'Shaam bakhair'],
+    ['شب بخیر', 'Shab bakhair'],
+    ['بہت بہت شکریہ', 'Bohot bohot shukriya'],
+    ['آپ کیسے ہیں', 'Aap kaise hain'],
+    ['آپ کیسی ہیں', 'Aap kaisi hain'],
+    ['میں ٹھیک ہوں', 'Main theek hoon'],
+    ['کیا حال ہے', 'Kya haal hai'],
+    ['امید ہے سب ٹھیک ہوگا', 'Umeed hai sab theek hoga'],
+  ];
+
+  let res = urdu;
+  for (const [key, val] of phraseMap) {
+    res = res.replaceAll(key, val);
+  }
+
+  // 2. Comprehensive Urdu Words Map
+  const wordMap: Record<string, string> = {
+    'شکریہ': 'shukriya',
     'کیسے': 'kaise',
     'کیسا': 'kaisa',
+    'کیسی': 'kaisi',
     'ہیں': 'hain',
     'ہوں': 'hoon',
     'ہے': 'hai',
+    'ہو': 'ho',
     'آپ': 'aap',
     'تم': 'tum',
     'میں': 'main',
     'ہم': 'hum',
+    'وہ': 'woh',
+    'یہ': 'yeh',
     'ٹھیک': 'theek',
     'بہت': 'bohot',
     'اچھا': 'acha',
+    'اچھی': 'achi',
+    'اچھے': 'ache',
     'کیا': 'kya',
     'کیوں': 'kyun',
     'کہاں': 'kahan',
     'کب': 'kab',
     'کون': 'kaun',
     'ہاں': 'haan',
+    'جی': 'jee',
     'نہیں': 'nahi',
     'کل': 'kal',
     'آج': 'aaj',
@@ -628,20 +748,100 @@ export function urduScriptToRomanUrdu(urdu: string): string {
     'کام': 'kaam',
     'پانی': 'paani',
     'کھانا': 'khana',
-    'اللہ حافظ': 'Allah Hafiz',
     'مدد': 'madad',
     'ضرورت': 'zaroorat',
+    'ضروری': 'zaroori',
     'شاندار': 'shandar',
     'آسان': 'aasan',
     'نام': 'naam',
     'میرا': 'mera',
     'میری': 'meri',
+    'میرے': 'mere',
     'وقت': 'waqt',
+    'اور': 'aur',
+    'پر': 'par',
+    'سے': 'se',
+    'کو': 'ko',
+    'کی': 'ki',
+    'کا': 'ka',
+    'کے': 'ke',
+    'ایک': 'ek',
+    'دو': 'do',
+    'تین': 'teen',
+    'چار': 'char',
+    'پانچ': 'paanch',
+    'کرو': 'karo',
+    'کرنا': 'karna',
+    'کریں': 'karein',
+    'کر': 'kar',
+    'رہا': 'raha',
+    'رہی': 'rahi',
+    'رہے': 'rahe',
+    'تھا': 'tha',
+    'تھی': 'thi',
+    'تھے': 'the',
+    'بولنا': 'bolna',
+    'بولیں': 'bolein',
+    'بولتا': 'bolta',
+    'کہنا': 'kehna',
+    'سننا': 'sunna',
+    'دیکھنا': 'dekhna',
+    'جانا': 'jaana',
+    'آنا': 'aana',
+    'جا': 'ja',
+    'آ': 'aa',
+    'بات': 'baat',
+    'عربی': 'arabi',
+    'اردو': 'urdu',
+    'انگریزی': 'angrezi',
+    'سب': 'sab',
+    'سبھی': 'sabhi',
+    'کوئی': 'koi',
+    'کچھ': 'kuch',
+    'کتاب': 'kitaab',
+    'گاڑی': 'gaari',
+    'فون': 'phone',
+    'بازار': 'bazaar',
+    'اسکول': 'school',
+    'مبارک': 'mubarak',
+    'وسیم': 'Waseem',
+    'آصف': 'Asif',
   };
 
-  let res = urdu;
-  for (const [key, val] of Object.entries(map)) {
-    res = res.replaceAll(key, val);
+  // Replace recognized words
+  const tokens = res.split(/(\s+|[.,!?،؟])/);
+  const mapped = tokens.map((token) => {
+    const cleanToken = token.trim();
+    if (wordMap[cleanToken]) {
+      return wordMap[cleanToken];
+    }
+    // If token still contains Urdu characters, transliterate phonetically letter-by-letter
+    if (/[\u0600-\u06FF]/.test(cleanToken)) {
+      return transliterateUrduLetters(cleanToken);
+    }
+    return token;
+  });
+
+  return mapped.join('');
+}
+
+/**
+ * Phonetic fallback letter mapper for any arbitrary Urdu words
+ */
+function transliterateUrduLetters(word: string): string {
+  const charMap: Record<string, string> = {
+    'ا': 'a', 'آ': 'aa', 'ب': 'b', 'پ': 'p', 'ت': 't', 'ٹ': 't',
+    'ث': 's', 'ج': 'j', 'چ': 'ch', 'ح': 'h', 'خ': 'kh', 'د': 'd',
+    'ڈ': 'd', 'ذ': 'z', 'ر': 'r', 'ڑ': 'r', 'ز': 'z', 'ژ': 'zh',
+    'س': 's', 'ش': 'sh', 'ص': 's', 'ض': 'z', 'ط': 't', 'ظ': 'z',
+    'ع': 'a', 'غ': 'gh', 'ف': 'f', 'ق': 'q', 'ک': 'k', 'گ': 'g',
+    'ل': 'l', 'م': 'm', 'ن': 'n', 'ں': 'n', 'و': 'o', 'ہ': 'h',
+    'ۂ': 'h', 'ھ': 'h', 'ء': '', 'ی': 'i', 'ے': 'e'
+  };
+
+  let out = '';
+  for (const ch of word) {
+    out += charMap[ch] !== undefined ? charMap[ch] : ch;
   }
-  return res;
+  return out;
 }

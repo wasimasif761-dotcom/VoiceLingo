@@ -1,5 +1,6 @@
 import { LanguageCode } from '../types';
 import { LANGUAGES } from './languages';
+import { urduScriptToRomanUrdu } from './translator';
 
 export interface SpeechRecognitionCallbacks {
   onTranscript: (finalText: string, interimText: string) => void;
@@ -14,30 +15,42 @@ export class VoiceRecognitionManager {
   private currentLang: LanguageCode = 'ur';
   private callbacks: SpeechRecognitionCallbacks;
   private accumulatedFinalText = '';
+  private currentInterimText = '';
+  private restartTimeout: any = null;
 
   constructor(callbacks: SpeechRecognitionCallbacks) {
     this.callbacks = callbacks;
   }
 
   public isSupported(): boolean {
-    return typeof window !== 'undefined' &&
-      ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
+    return (
+      typeof window !== 'undefined' &&
+      Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
+    );
   }
 
   public setLanguage(lang: LanguageCode) {
     this.currentLang = lang;
     if (this.recognition && this.isListening) {
-      this.recognition.lang = LANGUAGES[lang].speechCode;
+      try {
+        const speechCode = LANGUAGES[lang]?.speechCode || 'ur-PK';
+        this.recognition.lang = speechCode;
+      } catch (e) {}
     }
   }
 
   public setInitialTranscript(text: string) {
-    this.accumulatedFinalText = text;
+    this.accumulatedFinalText = text.trim();
   }
 
+  /**
+   * Starts Speech Recognition synchronously within the user gesture context.
+   */
   public start(lang?: LanguageCode) {
     if (!this.isSupported()) {
-      this.callbacks.onError('Web Speech Recognition is not supported in this browser. Please use Google Chrome, Edge, or Safari.');
+      this.callbacks.onError(
+        'Speech Recognition is not supported in this browser. Please open in Google Chrome or Edge.'
+      );
       return;
     }
 
@@ -46,74 +59,133 @@ export class VoiceRecognitionManager {
     }
 
     this.shouldKeepListening = true;
+    this.currentInterimText = '';
+
+    this.initAndStart();
+  }
+
+  private initAndStart() {
+    if (!this.shouldKeepListening) return;
+
+    if (this.restartTimeout) {
+      clearTimeout(this.restartTimeout);
+      this.restartTimeout = null;
+    }
 
     try {
-      // @ts-ignore
-      const SpeechRecognitionConstructor = window.SpeechRecognition || window.webkitSpeechRecognition;
-      this.recognition = new SpeechRecognitionConstructor();
-      
-      // Continuous long-form dictation
-      this.recognition.continuous = true;
-      this.recognition.interimResults = true;
-      this.recognition.maxAlternatives = 1;
-      this.recognition.lang = LANGUAGES[this.currentLang].speechCode;
+      if (this.recognition) {
+        try {
+          this.recognition.onstart = null;
+          this.recognition.onresult = null;
+          this.recognition.onerror = null;
+          this.recognition.onend = null;
+          this.recognition.abort();
+        } catch (e) {}
+        this.recognition = null;
+      }
 
-      this.recognition.onstart = () => {
+      const SpeechRecognitionConstructor =
+        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+      const rec = new SpeechRecognitionConstructor();
+      this.recognition = rec;
+
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.maxAlternatives = 1;
+
+      // Language selection
+      const speechCode = LANGUAGES[this.currentLang]?.speechCode || 'ur-PK';
+      rec.lang = speechCode;
+
+      rec.onstart = () => {
         this.isListening = true;
         this.callbacks.onStateChange(true);
       };
 
-      this.recognition.onresult = (event: any) => {
-        let interimTranscript = '';
-        let newFinalPart = '';
+      rec.onresult = (event: any) => {
+        let interim = '';
+        let newFinalChunk = '';
 
         for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const item = event.results[i];
-          const text = item[0]?.transcript || '';
-          if (item.isFinal) {
-            newFinalPart += text;
+          const res = event.results[i];
+          let transcriptText = res[0]?.transcript || '';
+
+          // If user selected Roman Urdu, automatically transliterate recognized Urdu into Roman Urdu
+          if (this.currentLang === 'ur-roman') {
+            transcriptText = urduScriptToRomanUrdu(transcriptText);
+          }
+
+          if (res.isFinal) {
+            newFinalChunk += (newFinalChunk ? ' ' : '') + transcriptText.trim();
           } else {
-            interimTranscript += text;
+            interim += (interim ? ' ' : '') + transcriptText.trim();
           }
         }
 
-        if (newFinalPart) {
-          const separator = this.accumulatedFinalText && !this.accumulatedFinalText.endsWith(' ') ? ' ' : '';
-          this.accumulatedFinalText = (this.accumulatedFinalText + separator + newFinalPart).trim();
+        if (newFinalChunk) {
+          const sep = this.accumulatedFinalText && !this.accumulatedFinalText.endsWith(' ') ? ' ' : '';
+          this.accumulatedFinalText = (this.accumulatedFinalText + sep + newFinalChunk).trim();
         }
 
-        this.callbacks.onTranscript(this.accumulatedFinalText, interimTranscript);
+        this.currentInterimText = interim;
+        this.callbacks.onTranscript(this.accumulatedFinalText, interim);
       };
 
-      this.recognition.onerror = (event: any) => {
-        console.warn('SpeechRecognition error:', event.error);
+      rec.onerror = (event: any) => {
+        console.warn('SpeechRecognition event error:', event.error);
+
         if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
           this.shouldKeepListening = false;
-          this.callbacks.onError('Microphone permission was denied. Please allow microphone access in your browser settings.');
-        } else if (event.error === 'no-speech') {
-          // Normal timeout if user was quiet
-        } else if (event.error === 'network') {
-          this.callbacks.onError('Network connection error occurred during voice recognition.');
+          this.isListening = false;
+          this.callbacks.onError(
+            'Microphone permission denied! براؤزر کی سیٹنگز میں مائیکروفون کی اجازت (Allow) دیں تاکہ آواز لکھی جا سکے۔'
+          );
+          this.callbacks.onStateChange(false);
+          return;
         }
+
+        if (event.error === 'audio-capture') {
+          this.callbacks.onError('مائیکروفون دستیاب نہیں ہے۔ کوئی اور ایپ مائیک استعمال کر رہی ہے (Microphone busy).');
+          return;
+        }
+
+        if (event.error === 'network') {
+          // Network issue with speech services
+          this.callbacks.onError('وائس سروس کنکشن کا مسئلہ۔ انٹرنیٹ چیک کریں (Speech service network error).');
+          return;
+        }
+
+        // 'no-speech' is normal silence, we do not alert user
       };
 
-      this.recognition.onend = () => {
+      rec.onend = () => {
         this.isListening = false;
-        if (this.shouldKeepListening) {
-          try {
-            this.recognition.start();
-            return;
-          } catch (e) {
-            // Already active
-          }
+
+        // Commit any lingering interim text before restart
+        if (this.currentInterimText) {
+          const sep = this.accumulatedFinalText && !this.accumulatedFinalText.endsWith(' ') ? ' ' : '';
+          this.accumulatedFinalText = (this.accumulatedFinalText + sep + this.currentInterimText).trim();
+          this.currentInterimText = '';
+          this.callbacks.onTranscript(this.accumulatedFinalText, '');
         }
-        this.callbacks.onStateChange(false);
+
+        if (this.shouldKeepListening) {
+          // Restart gracefully with fresh instance for long continuous dictation
+          this.restartTimeout = setTimeout(() => {
+            if (this.shouldKeepListening) {
+              this.initAndStart();
+            }
+          }, 80);
+        } else {
+          this.callbacks.onStateChange(false);
+        }
       };
 
-      this.recognition.start();
+      rec.start();
     } catch (err: any) {
       console.error('Failed to start SpeechRecognition:', err);
-      this.callbacks.onError(err.message || 'Could not start microphone recording.');
+      this.callbacks.onError(err.message || 'Could not start microphone voice recognition.');
       this.isListening = false;
       this.callbacks.onStateChange(false);
     }
@@ -121,11 +193,26 @@ export class VoiceRecognitionManager {
 
   public stop() {
     this.shouldKeepListening = false;
+
+    if (this.restartTimeout) {
+      clearTimeout(this.restartTimeout);
+      this.restartTimeout = null;
+    }
+
+    // Flush any pending interim speech into final text
+    if (this.currentInterimText) {
+      const sep = this.accumulatedFinalText && !this.accumulatedFinalText.endsWith(' ') ? ' ' : '';
+      this.accumulatedFinalText = (this.accumulatedFinalText + sep + this.currentInterimText).trim();
+      this.currentInterimText = '';
+      this.callbacks.onTranscript(this.accumulatedFinalText, '');
+    }
+
     if (this.recognition) {
       try {
         this.recognition.stop();
       } catch (e) {}
     }
+
     this.isListening = false;
     this.callbacks.onStateChange(false);
   }
@@ -136,39 +223,41 @@ export class VoiceRecognitionManager {
 }
 
 /**
- * Enhanced Text-to-Speech manager:
- * Uses native Web SpeechSynthesis with automatic high-fidelity Cloud Audio fallback
- * ensuring Arabic, Urdu, English, and Roman Urdu voice output works 100% on any mobile device.
+ * Text-to-Speech Manager:
+ * Uses Google Cloud TTS audio endpoint with fallback to window.speechSynthesis
+ * Works 100% reliably for Urdu (اردو), Arabic (العربية), English, and Roman Urdu.
  */
 export class TextToSpeechManager {
-  private static synth: SpeechSynthesis | null = typeof window !== 'undefined' ? window.speechSynthesis : null;
+  private static synth: SpeechSynthesis | null =
+    typeof window !== 'undefined' ? window.speechSynthesis : null;
   private static currentUtterance: SpeechSynthesisUtterance | null = null;
-  private static fallbackAudio: HTMLAudioElement | null = null;
-  private static isSpeakingFallback = false;
+  private static currentAudio: HTMLAudioElement | null = null;
+  private static isPlayingAudio = false;
 
   public static isSupported(): boolean {
-    return true; // Always supported via hybrid native + cloud fallback
+    return true;
   }
 
-  public static getVoices(): Promise<SpeechSynthesisVoice[]> {
-    return new Promise((resolve) => {
-      if (!this.synth) {
-        resolve([]);
-        return;
-      }
-      let voices = this.synth.getVoices();
-      if (voices.length > 0) {
-        resolve(voices);
-        return;
-      }
-      this.synth.onvoiceschanged = () => {
-        voices = this.synth?.getVoices() || [];
-        resolve(voices);
-      };
-      setTimeout(() => {
-        resolve(this.synth?.getVoices() || []);
-      }, 400);
-    });
+  public static stop() {
+    if (this.synth) {
+      try {
+        this.synth.cancel();
+      } catch (e) {}
+      this.currentUtterance = null;
+    }
+
+    if (this.currentAudio) {
+      try {
+        this.currentAudio.pause();
+        this.currentAudio.currentTime = 0;
+      } catch (e) {}
+      this.currentAudio = null;
+      this.isPlayingAudio = false;
+    }
+  }
+
+  public static isSpeaking(): boolean {
+    return Boolean(this.synth?.speaking || this.isPlayingAudio);
   }
 
   public static async speak(
@@ -176,7 +265,6 @@ export class TextToSpeechManager {
     lang: LanguageCode,
     options?: {
       rate?: number;
-      pitch?: number;
       onStart?: () => void;
       onEnd?: () => void;
       onError?: (err: any) => void;
@@ -188,60 +276,47 @@ export class TextToSpeechManager {
     if (!clean) return;
 
     // Determine target TTS language code
-    const targetCode = LANGUAGES[lang].ttsCode;
-    const shortCode = lang === 'ur-roman' ? 'ur' : lang; // Roman Urdu is spoken in natural Urdu accent
+    // Roman Urdu is spoken in natural Urdu accent
+    const ttsCode = lang === 'ur-roman' ? 'ur' : lang;
 
+    // Use High-Quality Cloud Audio stream first because Android/iOS often lack native Urdu/Arabic voices
     try {
-      const voices = await this.getVoices();
-      // Check if a native voice is available for this language
-      const matchingVoice = voices.find(
-        (v) =>
-          v.lang.toLowerCase() === targetCode.toLowerCase() ||
-          v.lang.toLowerCase().startsWith(shortCode.toLowerCase())
-      );
+      const trimmed = clean.slice(0, 350);
+      const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${ttsCode}&q=${encodeURIComponent(
+        trimmed
+      )}`;
 
-      // If phone has a native voice installed, try SpeechSynthesis
-      if (this.synth && matchingVoice) {
-        const utterance = new SpeechSynthesisUtterance(clean);
-        this.currentUtterance = utterance;
-        utterance.voice = matchingVoice;
-        utterance.lang = matchingVoice.lang || targetCode;
-        utterance.rate = options?.rate ?? 1.0;
-        utterance.pitch = options?.pitch ?? 1.0;
+      const audio = new Audio(audioUrl);
+      this.currentAudio = audio;
+      this.isPlayingAudio = true;
+      audio.playbackRate = options?.rate ?? 1.0;
 
-        utterance.onstart = () => {
-          options?.onStart?.();
-        };
+      audio.onplay = () => {
+        options?.onStart?.();
+      };
 
-        utterance.onend = () => {
-          this.currentUtterance = null;
-          options?.onEnd?.();
-        };
+      audio.onended = () => {
+        this.isPlayingAudio = false;
+        this.currentAudio = null;
+        options?.onEnd?.();
+      };
 
-        utterance.onerror = (e) => {
-          this.currentUtterance = null;
-          if (e.error !== 'canceled' && e.error !== 'interrupted') {
-            // Native synthesis failed, fallback to high-quality audio stream
-            console.log('Native speech failed, using high-fidelity fallback audio');
-            this.playFallbackAudio(clean, shortCode, options);
-          } else {
-            options?.onEnd?.();
-          }
-        };
+      audio.onerror = () => {
+        this.isPlayingAudio = false;
+        this.currentAudio = null;
+        // Fallback to Web Speech Synthesis
+        this.speakWithWebSpeech(clean, ttsCode, options);
+      };
 
-        this.synth.speak(utterance);
-        return;
-      }
-
-      // If no native voice installed on this phone (very common on Android for Arabic/Urdu):
-      this.playFallbackAudio(clean, shortCode, options);
-    } catch (err) {
-      console.warn('Speech error, fallback audio triggered:', err);
-      this.playFallbackAudio(clean, shortCode, options);
+      await audio.play();
+      return;
+    } catch (e) {
+      // Audio playback failed (e.g. autoplay restriction), fallback to WebSpeech
+      this.speakWithWebSpeech(clean, ttsCode, options);
     }
   }
 
-  private static playFallbackAudio(
+  private static speakWithWebSpeech(
     text: string,
     langCode: string,
     options?: {
@@ -251,62 +326,37 @@ export class TextToSpeechManager {
       onError?: (err: any) => void;
     }
   ) {
+    if (!this.synth) {
+      options?.onEnd?.();
+      return;
+    }
+
     try {
-      const trimmedText = text.slice(0, 300); // Standard sentence limit for instant audio
-      const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${langCode}&q=${encodeURIComponent(
-        trimmedText
-      )}`;
+      const utterance = new SpeechSynthesisUtterance(text);
+      this.currentUtterance = utterance;
 
-      const audio = new Audio(audioUrl);
-      this.fallbackAudio = audio;
-      this.isSpeakingFallback = true;
-      audio.playbackRate = options?.rate ?? 1.0;
+      const fullCode =
+        langCode === 'ur' ? 'ur-PK' : langCode === 'ar' ? 'ar-SA' : 'en-US';
+      utterance.lang = fullCode;
+      utterance.rate = options?.rate ?? 1.0;
 
-      audio.onplay = () => {
+      utterance.onstart = () => {
         options?.onStart?.();
       };
 
-      audio.onended = () => {
-        this.isSpeakingFallback = false;
-        this.fallbackAudio = null;
+      utterance.onend = () => {
+        this.currentUtterance = null;
         options?.onEnd?.();
       };
 
-      audio.onerror = (e) => {
-        this.isSpeakingFallback = false;
-        this.fallbackAudio = null;
+      utterance.onerror = () => {
+        this.currentUtterance = null;
         options?.onEnd?.();
       };
 
-      audio.play().catch((err) => {
-        console.warn('Audio play failed:', err);
-        this.isSpeakingFallback = false;
-        this.fallbackAudio = null;
-        options?.onEnd?.();
-      });
+      this.synth.speak(utterance);
     } catch (e) {
       options?.onEnd?.();
     }
-  }
-
-  public static stop() {
-    if (this.synth) {
-      try {
-        this.synth.cancel();
-      } catch (e) {}
-      this.currentUtterance = null;
-    }
-    if (this.fallbackAudio) {
-      try {
-        this.fallbackAudio.pause();
-        this.fallbackAudio.currentTime = 0;
-      } catch (e) {}
-      this.fallbackAudio = null;
-      this.isSpeakingFallback = false;
-    }
-  }
-
-  public static isSpeaking(): boolean {
-    return Boolean(this.synth?.speaking || this.isSpeakingFallback);
   }
 }
