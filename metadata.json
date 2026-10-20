@@ -1,0 +1,10 @@
+{
+  "name": "VoiceLingo",
+  "description": "Voice-to-Voice Translation and Smart Notebook app with Speech-to-Text, NLLB offline AI translation, Text-to-Speech, and WhatsApp sharing.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
