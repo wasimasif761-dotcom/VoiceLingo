@@ -1,7 +1,22 @@
 {
-  "name": "react-example",
-  "private": true,
-  "version": "0.0.0",
+  "name": "voicelingo",
+  "version": "1.0.0",
+  "description": "Voice-to-Voice Translation & Smart Notes PWA supporting Urdu, Roman Urdu, English, and Arabic",
+  "author": "Waseem Asif <wasimasif761@gmail.com>",
+  "license": "MIT",
+  "keywords": [
+    "voice-translation",
+    "speech-to-text",
+    "text-to-speech",
+    "pwa",
+    "urdu",
+    "arabic",
+    "roman-urdu",
+    "transformers-js",
+    "nllb",
+    "whatsapp-sharing",
+    "web-audio"
+  ],
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
