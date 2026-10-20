@@ -27,7 +27,7 @@ import {
 } from 'lucide-react';
 import { LanguageCode, NoteItem, TranslationProgress } from './types';
 import { LANGUAGES, SAMPLE_PROMPTS } from './utils/languages';
-import { translateWithNLLB, fallbackSmartTranslate } from './utils/translator';
+import { translateText } from './utils/translator';
 import { VoiceRecognitionManager, TextToSpeechManager } from './utils/speech';
 import { AudioRecordingService } from './utils/audioRecorder';
 import {
@@ -238,65 +238,42 @@ export default function App() {
     }
 
     setTranslationProgress({
-      status: 'loading-model',
-      progress: 5,
-      statusText: 'Initializing AI translation...',
+      status: 'translating',
+      statusText: 'Translating...',
     });
 
     try {
-      // First quick heuristic translation check for instant responsiveness
-      const instantPreview = fallbackSmartTranslate(textToTranslate, sourceLang, targetLang);
-      if (instantPreview && instantPreview !== textToTranslate) {
-        setTranslatedText(instantPreview);
-      }
-
-      setTranslationProgress({
-        status: 'translating',
-        progress: 40,
-        statusText: 'Translating with Neural AI (NLLB-200)...',
-      });
-
-      const result = await translateWithNLLB(
+      const finalResult = await translateText(
         textToTranslate,
         sourceLang,
         targetLang,
-        (progressData) => {
-          setTranslationProgress({
-            status: progressData.status === 'done' ? 'ready' : 'loading-model',
-            progress: progressData.progress ?? 60,
-            statusText: progressData.file
-              ? `Downloading weights: ${progressData.file} (${progressData.progress ?? 0}%)`
-              : 'Processing multilingual layers...',
-          });
-        }
+        (statusText) => setTranslationProgress({ status: 'translating', statusText })
       );
 
-      const finalResult = result || instantPreview || textToTranslate;
-      setTranslatedText(finalResult);
+      const resolved = finalResult || textToTranslate;
+      setTranslatedText(resolved);
       setTranslationProgress({ status: 'ready', statusText: 'Translation complete!' });
 
       // Save to Notes History
       const newNote: NoteItem = {
         id: Date.now().toString(),
         sourceText: textToTranslate,
-        translatedText: finalResult,
+        translatedText: resolved,
         sourceLang,
         targetLang,
         createdAt: Date.now(),
         hasAudio: Boolean(recordedAudioBlob),
       };
 
-      saveNotes([newNote, ...notes.slice(0, 49)]); // keep latest 50
+      saveNotes([newNote, ...notes.slice(0, 49)]);
     } catch (err: any) {
       console.error('Translation error:', err);
-      // Fallback
-      const fallback = fallbackSmartTranslate(textToTranslate, sourceLang, targetLang);
-      setTranslatedText(fallback);
-      setTranslationProgress({
-        status: 'error',
-        error: 'Offline fallback used. Model took too long to load.',
-      });
-      showToast('Offline dictionary translation applied.', 'info');
+      setTranslationProgress({ status: 'error', error: 'Could not complete translation.' });
+      showToast('Could not complete translation.', 'error');
+    } finally {
+      setTimeout(() => {
+        setTranslationProgress((prev) => (prev.status === 'ready' || prev.status === 'translating' ? { status: 'idle' } : prev));
+      }, 800);
     }
   };
 
@@ -708,17 +685,12 @@ export default function App() {
               />
 
               {/* Translation Progress Overlay */}
-              {translationProgress.status === 'loading-model' && (
-                <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-xs rounded-2xl flex flex-col items-center justify-center p-4 text-center space-y-3">
-                  <div className="w-8 h-8 border-3 border-cyan-400 border-t-transparent rounded-full animate-spin"></div>
-                  <div>
-                    <p className="text-xs font-semibold text-cyan-300">
-                      {translationProgress.statusText || 'Loading AI Neural Model...'}
-                    </p>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      Xenova/nllb-200-distilled-600M offline AI weights
-                    </p>
-                  </div>
+              {translationProgress.status === 'translating' && (
+                <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-xs rounded-2xl flex flex-col items-center justify-center p-4 text-center space-y-2 animate-in fade-in duration-150">
+                  <div className="w-8 h-8 border-3 border-emerald-400 border-t-transparent rounded-full animate-spin"></div>
+                  <p className="text-xs font-semibold text-emerald-300">
+                    {translationProgress.statusText || 'Translating (ترجمہ کیا جا رہا ہے)...'}
+                  </p>
                 </div>
               )}
             </div>
