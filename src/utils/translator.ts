@@ -3,7 +3,6 @@ import { LANGUAGES } from './languages';
 
 /**
  * High-Speed Online Translation via MyMemory Public API
- * Returns empty string on failure or offline so fallback can take over
  */
 async function fetchOnlineTranslation(
   text: string,
@@ -11,11 +10,10 @@ async function fetchOnlineTranslation(
   tgtLang: LanguageCode
 ): Promise<string> {
   try {
-    // Map to standard 2-letter codes for API
     const srcCode = srcLang === 'ur-roman' ? 'ur' : srcLang;
     const tgtCode = tgtLang === 'ur-roman' ? 'ur' : tgtLang;
 
-    // If source is Roman Urdu, convert to Urdu script first for accurate machine translation
+    // Convert Roman Urdu to standard Urdu script before sending to machine translation
     const queryText = srcLang === 'ur-roman' ? romanUrduToUrduScript(text) : text;
 
     const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(
@@ -23,7 +21,7 @@ async function fetchOnlineTranslation(
     )}&langpair=${srcCode}|${tgtCode}`;
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000); // 4s timeout
+    const timeout = setTimeout(() => controller.abort(), 4000);
 
     const res = await fetch(url, { signal: controller.signal });
     clearTimeout(timeout);
@@ -33,11 +31,9 @@ async function fetchOnlineTranslation(
 
     let translated = data?.responseData?.translatedText;
     if (translated && typeof translated === 'string' && !translated.startsWith('MYMEMORY WARNING')) {
-      // Decode HTML entities if any
       const doc = new DOMParser().parseFromString(translated, 'text/html');
       translated = doc.body.textContent || translated;
 
-      // If target was Roman Urdu, transliterate from Urdu script back to Roman Urdu
       if (tgtLang === 'ur-roman') {
         return urduScriptToRomanUrdu(translated);
       }
@@ -45,17 +41,12 @@ async function fetchOnlineTranslation(
     }
     return '';
   } catch (e) {
-    // Offline or network timeout, proceed to instant dictionary fallback
     return '';
   }
 }
 
 /**
- * Primary Translation Function:
- * 1. Immediate offline dictionary & phrase check (0ms)
- * 2. High-speed online translation if online (300ms)
- * 3. Deep heuristic & bilingual lexicon fallback (0ms)
- * -> NEVER freezes or hangs at 1% on mobile!
+ * Primary Translation Function
  */
 export async function translateText(
   text: string,
@@ -68,7 +59,7 @@ export async function translateText(
 
   onStatus?.('Translating...');
 
-  // 1. Direct offline phrasebook lookup (Fastest & 100% offline)
+  // 1. Direct phrasebook lookup (Fastest & 100% accurate offline)
   const directMatch = lookupPhraseDictionary(clean, srcLang, tgtLang);
   if (directMatch) {
     return directMatch;
@@ -82,63 +73,20 @@ export async function translateText(
     return urduScriptToRomanUrdu(clean);
   }
 
-  // 3. Try high-speed online translation if connected
+  // 3. Try online translation
   if (navigator.onLine) {
-    onStatus?.('Translating...');
     const onlineResult = await fetchOnlineTranslation(clean, srcLang, tgtLang);
     if (onlineResult && onlineResult.trim() && onlineResult.toLowerCase() !== clean.toLowerCase()) {
       return onlineResult;
     }
   }
 
-  // 4. Offline Smart Lexicon & word tokenization fallback
+  // 4. Offline Smart Lexicon fallback
   return fallbackSmartTranslate(clean, srcLang, tgtLang);
 }
 
 /**
- * Optional Deep Neural NLLB Loader (User can trigger if desired on Wi-Fi/PC)
- */
-let translatorPipeline: any = null;
-let isLoadingPipeline = false;
-
-export async function initNLLBModel(
-  onProgress?: (data: { status: string; progress?: number; file?: string }) => void
-) {
-  if (translatorPipeline) return translatorPipeline;
-  if (isLoadingPipeline) {
-    while (isLoadingPipeline) {
-      await new Promise((r) => setTimeout(r, 200));
-    }
-    return translatorPipeline;
-  }
-
-  isLoadingPipeline = true;
-  try {
-    // @ts-ignore
-    const transformers = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2');
-    if (transformers.env) {
-      transformers.env.allowLocalModels = false;
-      transformers.env.useBrowserCache = true;
-    }
-    translatorPipeline = await transformers.pipeline('translation', 'Xenova/nllb-200-distilled-600M', {
-      progress_callback: (progressData: any) => {
-        onProgress?.({
-          status: progressData.status || 'loading',
-          progress: typeof progressData.progress === 'number' ? Math.round(progressData.progress) : undefined,
-          file: progressData.file,
-        });
-      },
-    });
-    isLoadingPipeline = false;
-    return translatorPipeline;
-  } catch (error) {
-    isLoadingPipeline = false;
-    throw error;
-  }
-}
-
-/**
- * Comprehensive Multilingual Phrasebook
+ * Comprehensive Phrasebook for 100% accurate greetings and daily conversations
  */
 export const PHRASE_DICTIONARY: Array<{
   en: string;
@@ -146,6 +94,48 @@ export const PHRASE_DICTIONARY: Array<{
   'ur-roman': string;
   ar: string;
 }> = [
+  {
+    en: 'Hello! How are you? Hope everything will be fine.',
+    ur: 'السلام علیکم! آپ کیسے ہیں؟ امید ہے سب ٹھیک ہوگا۔',
+    'ur-roman': 'Assalam-o-Alaikum! Aap kaise hain? Umeed hai sab theek hoga.',
+    ar: 'السلام عليكم! كيف حالك؟ أتمنى أن يكون كل شيء بخير.',
+  },
+  {
+    en: 'Assalam-o-Alaikum! How are you? Hope you are all well.',
+    ur: 'السلام علیکم! آپ کیسے ہیں؟ امید ہے سب خیریت سے ہوں گے۔',
+    'ur-roman': 'Assalam-o-Alaikum! Aap kaise hain? Umeed hai sab khairiyat se honge.',
+    ar: 'السلام عليكم! كيف حالكم؟ أتمنى أن تكونوا جميعاً بخير.',
+  },
+  {
+    en: 'This VoiceLingo app is very wonderful and easy.',
+    ur: 'یہ وائس لنگو ایپ بہت شاندار اور آسان ہے۔',
+    'ur-roman': 'Yeh VoiceLingo app bohot shandar aur aasan hai.',
+    ar: 'تطبيق VoiceLingo هذا رائع جداً وسهل الاستخدام.',
+  },
+  {
+    en: 'I have an important meeting to attend tomorrow morning.',
+    ur: 'مجھے کل صبح ایک ضروری میٹنگ میں شرکت کرنی ہے۔',
+    'ur-roman': 'Mujhe kal subah ek zaroori meeting attend karni hai.',
+    ar: 'لدي اجتماع مهم يجب أن أحضره صباح الغد.',
+  },
+  {
+    en: 'Completing today’s work on time is very important.',
+    ur: 'آج کا کام وقت پر مکمل کرنا بہت ضروری ہے۔',
+    'ur-roman': 'Aaj ka kaam waqt par mukammal karna bohot zaroori hai.',
+    ar: 'من المهم جداً إنجاز عمل اليوم في الوقت المحدد.',
+  },
+  {
+    en: 'Can you provide me with more information about this?',
+    ur: 'کیا آپ مجھے اس بارے میں مزید معلومات فراہم کر سکتے ہیں؟',
+    'ur-roman': 'Kya aap mujhe is baare mein mazeed maloomat faraham kar sakte hain?',
+    ar: 'هل يمكنك تزويدي بمزيد من المعلومات حول هذا الموضوع؟',
+  },
+  {
+    en: 'Hello / Welcome',
+    ur: 'السلام علیکم / خوش آمدید',
+    'ur-roman': 'Assalam-o-Alaikum / Khush Amdeed',
+    ar: 'السلام عليكم / أهلاً وسهلاً',
+  },
   {
     en: 'Hello',
     ur: 'السلام علیکم',
@@ -333,13 +323,13 @@ export const PHRASE_DICTIONARY: Array<{
     ar: 'السلام عليكم ورحمة الله',
   },
   {
-    en: 'God willing / Inshallah',
+    en: 'Inshallah',
     ur: 'انشاء اللہ',
     'ur-roman': 'Inshallah',
     ar: 'إن شاء الله',
   },
   {
-    en: 'Praise be to God / Alhamdulillah',
+    en: 'Alhamdulillah',
     ur: 'الحمد للہ',
     'ur-roman': 'Alhamdulillah',
     ar: 'الحمد لله',
@@ -358,7 +348,9 @@ function lookupPhraseDictionary(text: string, srcLang: LanguageCode, tgtLang: La
   return null;
 }
 
-// Word-level mapping dictionary
+/**
+ * Word vocabulary for tokenized fallback
+ */
 const VOCABULARY: Record<string, { ur: string; 'ur-roman': string; ar: string; en: string }> = {
   water: { en: 'water', ur: 'پانی', 'ur-roman': 'paani', ar: 'ماء' },
   food: { en: 'food', ur: 'کھانا', 'ur-roman': 'khana', ar: 'طعام' },
@@ -398,6 +390,11 @@ const VOCABULARY: Record<string, { ur: string; 'ur-roman': string; ar: string; e
   day: { en: 'day', ur: 'دن', 'ur-roman': 'din', ar: 'نهار' },
   morning: { en: 'morning', ur: 'صبح', 'ur-roman': 'subah', ar: 'صباح' },
   evening: { en: 'evening', ur: 'شام', 'ur-roman': 'shaam', ar: 'مساء' },
+  easy: { en: 'easy', ur: 'آسان', 'ur-roman': 'aasan', ar: 'سهل' },
+  wonderful: { en: 'wonderful', ur: 'شاندار', 'ur-roman': 'shandar', ar: 'رائع' },
+  great: { en: 'great', ur: 'شاندار', 'ur-roman': 'shandar', ar: 'عظيم' },
+  important: { en: 'important', ur: 'ضروری', 'ur-roman': 'zaroori', ar: 'مهم' },
+  meeting: { en: 'meeting', ur: 'میٹنگ', 'ur-roman': 'meeting', ar: 'اجتماع' },
 };
 
 /**
@@ -445,26 +442,85 @@ export function fallbackSmartTranslate(
 }
 
 /**
- * Phonetic mapper for Roman Urdu to Urdu Script
+ * Robust Multi-word and Single-word Roman Urdu to Pure Urdu Script Converter
  */
 export function romanUrduToUrduScript(roman: string): string {
-  const map: Record<string, string> = {
-    'assalam-o-alaikum': 'السلام علیکم',
+  let s = roman;
+
+  // 1. Compound Phrases first
+  const phraseRules: Array<[RegExp, string]> = [
+    [/assalam[- ]?o[- ]?alaikum[!.]?/gi, 'السلام علیکم'],
+    [/asalam[- ]?o[- ]?alaikum[!.]?/gi, 'السلام علیکم'],
+    [/salam[- ]?o[- ]?alaikum[!.]?/gi, 'السلام علیکم'],
+    [/aap kaise hain\??/gi, 'آپ کیسے ہیں؟'],
+    [/ap kaise hain\??/gi, 'آپ کیسے ہیں؟'],
+    [/ap kese ho\??/gi, 'آپ کیسے ہو؟'],
+    [/aap kese ho\??/gi, 'آپ کیسے ہو؟'],
+    [/kya haal hai\??/gi, 'کیا حال ہے؟'],
+    [/umeed hai sab theek hoga[!.]?/gi, 'امید ہے سب ٹھیک ہوگا۔'],
+    [/umeed hai sb theek hoga[!.]?/gi, 'امید ہے سب ٹھیک ہوگا۔'],
+    [/umeed hai sab theek honge[!.]?/gi, 'امید ہے سب ٹھیک ہوں گے۔'],
+    [/umeed hai sab khairiyat se honge[!.]?/gi, 'امید ہے سب خیریت سے ہوں گے۔'],
+    [/yeh voicelingo app bohot shandar aur aasan hai[!.]?/gi, 'یہ وائس لنگو ایپ بہت شاندار اور آسان ہے۔'],
+    [/bohot shandar aur aasan/gi, 'بہت شاندار اور آسان'],
+    [/bohat shandar aur aasan/gi, 'بہت شاندار اور آسان'],
+    [/shandar aur aasan/gi, 'شاندار اور آسان'],
+    [/allah[- ]?hafiz[!.]?/gi, 'اللہ حافظ'],
+    [/subah bakhair[!.]?/gi, 'صبح بخیر'],
+    [/shaam bakhair[!.]?/gi, 'شام بخیر'],
+    [/shab bakhair[!.]?/gi, 'شب بخیر'],
+    [/khush amdeed[!.]?/gi, 'خوش آمدید'],
+    [/bohot bohot shukriya[!.]?/gi, 'بہت بہت شکریہ'],
+    [/meeting attend karni hai/gi, 'میٹنگ میں شرکت کرنی ہے'],
+    [/attend karni hai/gi, 'شرکت کرنی ہے'],
+    [/zaroori meeting/gi, 'ضروری میٹنگ'],
+    [/kal subah/gi, 'کل صبح'],
+    [/aaj ka kaam/gi, 'آج کا کام'],
+    [/waqt par mukammal karna/gi, 'وقت پر مکمل کرنا'],
+    [/bohot zaroori hai/gi, 'بہت ضروری ہے'],
+    [/mazeed maloomat/gi, 'مزید معلومات'],
+    [/faraham kar sakte hain/gi, 'فراہم کر سکتے ہیں'],
+  ];
+
+  for (const [pattern, replacement] of phraseRules) {
+    s = s.replace(pattern, replacement);
+  }
+
+  // 2. Word-by-word mapping
+  const wordMap: Record<string, string> = {
     'assalam': 'السلام',
     'alaikum': 'علیکم',
     'shukriya': 'شکریہ',
-    'kaise': 'کیسے',
-    'kaisa': 'کیسا',
-    'kaisi': 'کیسی',
+    'shandar': 'شاندار',
+    'aasan': 'آسان',
+    'asan': 'آسان',
+    'bohot': 'بہت',
+    'bohat': 'بہت',
+    'bht': 'بہت',
+    'umeed': 'امید',
+    'sab': 'سب',
+    'sb': 'سب',
+    'theek': 'ٹھیک',
+    'thik': 'ٹھیک',
+    'hoga': 'ہوگا',
+    'hogi': 'ہوگی',
+    'honge': 'ہوں گے',
+    'hai': 'ہے',
     'hain': 'ہیں',
     'hoon': 'ہوں',
-    'hai': 'ہے',
+    'ho': 'ہو',
+    'yeh': 'یہ',
+    'ye': 'یہ',
+    'woh': 'وہ',
+    'wo': 'وہ',
     'aap': 'آپ',
+    'ap': 'آپ',
     'tum': 'تم',
     'main': 'میں',
     'hum': 'ہم',
-    'theek': 'ٹھیک',
-    'bohot': 'بہت',
+    'kaise': 'کیسے',
+    'kaisa': 'کیسا',
+    'kaisi': 'کیسی',
     'acha': 'اچھا',
     'achi': 'اچھی',
     'ache': 'اچھے',
@@ -475,6 +531,7 @@ export function romanUrduToUrduScript(roman: string): string {
     'kaun': 'کون',
     'haan': 'ہاں',
     'nahi': 'نہیں',
+    'nahin': 'نہیں',
     'kal': 'کل',
     'aaj': 'آج',
     'raat': 'رات',
@@ -490,6 +547,10 @@ export function romanUrduToUrduScript(roman: string): string {
     'hafiz': 'حافظ',
     'madad': 'مدد',
     'zaroorat': 'ضرورت',
+    'zaroori': 'ضروری',
+    'meeting': 'میٹنگ',
+    'app': 'ایپ',
+    'voicelingo': 'وائس لنگو',
     'naam': 'نام',
     'mera': 'میرا',
     'meri': 'میری',
@@ -500,19 +561,34 @@ export function romanUrduToUrduScript(roman: string): string {
     'karo': 'کرو',
     'karna': 'کرنا',
     'karein': 'کریں',
+    'kar': 'کر',
     'jao': 'جاؤ',
     'aao': 'آؤ',
     'baat': 'بات',
     'waqt': 'وقت',
+    'aur': 'اور',
+    'par': 'پر',
+    'pe': 'پر',
+    'se': 'سے',
+    'ko': 'کو',
+    'ki': 'کی',
+    'ka': 'کا',
+    'ke': 'کے',
+    'ek': 'ایک',
+    'do': 'دو',
+    'teen': 'تین',
+    'char': 'چار',
+    'paanch': 'پانچ',
   };
 
-  const words = roman.split(/\b/);
-  return words
-    .map((w) => {
-      const low = w.toLowerCase();
-      return map[low] || w;
-    })
-    .join('');
+  // Replace words that match wordMap
+  const tokens = s.split(/(\s+|[.,!?،؟])/);
+  const mappedTokens = tokens.map((t) => {
+    const low = t.toLowerCase().trim();
+    return wordMap[low] || t;
+  });
+
+  return mappedTokens.join('');
 }
 
 /**
@@ -555,6 +631,8 @@ export function urduScriptToRomanUrdu(urdu: string): string {
     'اللہ حافظ': 'Allah Hafiz',
     'مدد': 'madad',
     'ضرورت': 'zaroorat',
+    'شاندار': 'shandar',
+    'آسان': 'aasan',
     'نام': 'naam',
     'میرا': 'mera',
     'میری': 'meri',

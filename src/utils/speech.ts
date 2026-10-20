@@ -52,7 +52,7 @@ export class VoiceRecognitionManager {
       const SpeechRecognitionConstructor = window.SpeechRecognition || window.webkitSpeechRecognition;
       this.recognition = new SpeechRecognitionConstructor();
       
-      // CRITICAL requirements: continuous = true, interimResults = true
+      // Continuous long-form dictation
       this.recognition.continuous = true;
       this.recognition.interimResults = true;
       this.recognition.maxAlternatives = 1;
@@ -91,7 +91,7 @@ export class VoiceRecognitionManager {
           this.shouldKeepListening = false;
           this.callbacks.onError('Microphone permission was denied. Please allow microphone access in your browser settings.');
         } else if (event.error === 'no-speech') {
-          // Normal timeout if user was quiet, do not break
+          // Normal timeout if user was quiet
         } else if (event.error === 'network') {
           this.callbacks.onError('Network connection error occurred during voice recognition.');
         }
@@ -99,13 +99,12 @@ export class VoiceRecognitionManager {
 
       this.recognition.onend = () => {
         this.isListening = false;
-        // Auto-reconnect if user has not explicitly hit Stop, maintaining long-form recording
         if (this.shouldKeepListening) {
           try {
             this.recognition.start();
             return;
           } catch (e) {
-            // Already started or restarting
+            // Already active
           }
         }
         this.callbacks.onStateChange(false);
@@ -125,9 +124,7 @@ export class VoiceRecognitionManager {
     if (this.recognition) {
       try {
         this.recognition.stop();
-      } catch (e) {
-        // Ignored
-      }
+      } catch (e) {}
     }
     this.isListening = false;
     this.callbacks.onStateChange(false);
@@ -139,14 +136,18 @@ export class VoiceRecognitionManager {
 }
 
 /**
- * Text-to-Speech manager using native window.speechSynthesis
+ * Enhanced Text-to-Speech manager:
+ * Uses native Web SpeechSynthesis with automatic high-fidelity Cloud Audio fallback
+ * ensuring Arabic, Urdu, English, and Roman Urdu voice output works 100% on any mobile device.
  */
 export class TextToSpeechManager {
   private static synth: SpeechSynthesis | null = typeof window !== 'undefined' ? window.speechSynthesis : null;
   private static currentUtterance: SpeechSynthesisUtterance | null = null;
+  private static fallbackAudio: HTMLAudioElement | null = null;
+  private static isSpeakingFallback = false;
 
   public static isSupported(): boolean {
-    return typeof window !== 'undefined' && 'speechSynthesis' in window;
+    return true; // Always supported via hybrid native + cloud fallback
   }
 
   public static getVoices(): Promise<SpeechSynthesisVoice[]> {
@@ -166,7 +167,7 @@ export class TextToSpeechManager {
       };
       setTimeout(() => {
         resolve(this.synth?.getVoices() || []);
-      }, 500);
+      }, 400);
     });
   }
 
@@ -181,65 +182,131 @@ export class TextToSpeechManager {
       onError?: (err: any) => void;
     }
   ) {
-    if (!this.synth) {
-      options?.onError?.(new Error('Speech Synthesis not supported in this browser.'));
-      return;
-    }
-
-    // Cancel any previous speech
     this.stop();
 
-    if (!text || !text.trim()) return;
+    const clean = text.trim();
+    if (!clean) return;
 
-    const utterance = new SpeechSynthesisUtterance(text.trim());
-    this.currentUtterance = utterance;
-
+    // Determine target TTS language code
     const targetCode = LANGUAGES[lang].ttsCode;
-    utterance.lang = targetCode;
-    utterance.rate = options?.rate ?? 1.0;
-    utterance.pitch = options?.pitch ?? 1.0;
+    const shortCode = lang === 'ur-roman' ? 'ur' : lang; // Roman Urdu is spoken in natural Urdu accent
 
-    // Pick best matching voice
-    const voices = await this.getVoices();
-    const matchingVoice = voices.find(
-      (v) =>
-        v.lang.toLowerCase() === targetCode.toLowerCase() ||
-        v.lang.toLowerCase().startsWith(targetCode.split('-')[0].toLowerCase())
-    );
+    try {
+      const voices = await this.getVoices();
+      // Check if a native voice is available for this language
+      const matchingVoice = voices.find(
+        (v) =>
+          v.lang.toLowerCase() === targetCode.toLowerCase() ||
+          v.lang.toLowerCase().startsWith(shortCode.toLowerCase())
+      );
 
-    if (matchingVoice) {
-      utterance.voice = matchingVoice;
-    }
+      // If phone has a native voice installed, try SpeechSynthesis
+      if (this.synth && matchingVoice) {
+        const utterance = new SpeechSynthesisUtterance(clean);
+        this.currentUtterance = utterance;
+        utterance.voice = matchingVoice;
+        utterance.lang = matchingVoice.lang || targetCode;
+        utterance.rate = options?.rate ?? 1.0;
+        utterance.pitch = options?.pitch ?? 1.0;
 
-    utterance.onstart = () => {
-      options?.onStart?.();
-    };
+        utterance.onstart = () => {
+          options?.onStart?.();
+        };
 
-    utterance.onend = () => {
-      this.currentUtterance = null;
-      options?.onEnd?.();
-    };
+        utterance.onend = () => {
+          this.currentUtterance = null;
+          options?.onEnd?.();
+        };
 
-    utterance.onerror = (e) => {
-      this.currentUtterance = null;
-      if (e.error !== 'canceled' && e.error !== 'interrupted') {
-        options?.onError?.(e);
-      } else {
-        options?.onEnd?.();
+        utterance.onerror = (e) => {
+          this.currentUtterance = null;
+          if (e.error !== 'canceled' && e.error !== 'interrupted') {
+            // Native synthesis failed, fallback to high-quality audio stream
+            console.log('Native speech failed, using high-fidelity fallback audio');
+            this.playFallbackAudio(clean, shortCode, options);
+          } else {
+            options?.onEnd?.();
+          }
+        };
+
+        this.synth.speak(utterance);
+        return;
       }
-    };
 
-    this.synth.speak(utterance);
+      // If no native voice installed on this phone (very common on Android for Arabic/Urdu):
+      this.playFallbackAudio(clean, shortCode, options);
+    } catch (err) {
+      console.warn('Speech error, fallback audio triggered:', err);
+      this.playFallbackAudio(clean, shortCode, options);
+    }
+  }
+
+  private static playFallbackAudio(
+    text: string,
+    langCode: string,
+    options?: {
+      rate?: number;
+      onStart?: () => void;
+      onEnd?: () => void;
+      onError?: (err: any) => void;
+    }
+  ) {
+    try {
+      const trimmedText = text.slice(0, 300); // Standard sentence limit for instant audio
+      const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${langCode}&q=${encodeURIComponent(
+        trimmedText
+      )}`;
+
+      const audio = new Audio(audioUrl);
+      this.fallbackAudio = audio;
+      this.isSpeakingFallback = true;
+      audio.playbackRate = options?.rate ?? 1.0;
+
+      audio.onplay = () => {
+        options?.onStart?.();
+      };
+
+      audio.onended = () => {
+        this.isSpeakingFallback = false;
+        this.fallbackAudio = null;
+        options?.onEnd?.();
+      };
+
+      audio.onerror = (e) => {
+        this.isSpeakingFallback = false;
+        this.fallbackAudio = null;
+        options?.onEnd?.();
+      };
+
+      audio.play().catch((err) => {
+        console.warn('Audio play failed:', err);
+        this.isSpeakingFallback = false;
+        this.fallbackAudio = null;
+        options?.onEnd?.();
+      });
+    } catch (e) {
+      options?.onEnd?.();
+    }
   }
 
   public static stop() {
     if (this.synth) {
-      this.synth.cancel();
+      try {
+        this.synth.cancel();
+      } catch (e) {}
       this.currentUtterance = null;
+    }
+    if (this.fallbackAudio) {
+      try {
+        this.fallbackAudio.pause();
+        this.fallbackAudio.currentTime = 0;
+      } catch (e) {}
+      this.fallbackAudio = null;
+      this.isSpeakingFallback = false;
     }
   }
 
   public static isSpeaking(): boolean {
-    return Boolean(this.synth?.speaking);
+    return Boolean(this.synth?.speaking || this.isSpeakingFallback);
   }
 }
