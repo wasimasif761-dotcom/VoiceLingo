@@ -28,7 +28,7 @@ import {
 import { LanguageCode, NoteItem, TranslationProgress } from './types';
 import { LANGUAGES, SAMPLE_PROMPTS } from './utils/languages';
 import { translateText } from './utils/translator';
-import { VoiceRecognitionManager, TextToSpeechManager } from './utils/speech';
+import { VoiceRecognitionManager, TextToSpeechManager, removeAdjacentRepeats } from './utils/speech';
 import { AudioRecordingService } from './utils/audioRecorder';
 import {
   AUTHOR_NAME,
@@ -234,14 +234,17 @@ export default function App() {
 
   // Translate Action
   const handleTranslate = async () => {
-    let textToTranslate = sourceText.trim();
     if (isRecording) {
-      if (interimText.trim()) {
-        textToTranslate = (textToTranslate ? `${textToTranslate} ${interimText.trim()}` : interimText.trim()).trim();
-        setSourceText(textToTranslate);
-      }
       handleStopRecording();
     }
+
+    let textToTranslate = sourceText.trim();
+    if (!textToTranslate && interimText.trim()) {
+      textToTranslate = interimText.trim();
+      setSourceText(textToTranslate);
+    }
+
+    textToTranslate = removeAdjacentRepeats(textToTranslate);
 
     if (!textToTranslate) {
       showToast('پہلے بولیں یا کوئی ٹیکسٹ لکھیں تاکہ ترجمہ ہو سکے (Speak or type text first)', 'info');
@@ -530,6 +533,7 @@ export default function App() {
                       setInterimText('');
                       setRecordedAudioBlob(null);
                       setRecordedAudioUrl(null);
+                      voiceRecognitionRef.current?.reset('');
                     }}
                     className="text-xs text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition"
                     title="Clear text"
@@ -570,7 +574,12 @@ export default function App() {
                       : interimText
                     : sourceText
                 }
-                onChange={(e) => setSourceText(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSourceText(val);
+                  setInterimText('');
+                  voiceRecognitionRef.current?.reset(val);
+                }}
                 dir={currentSourceInfo.isRtl ? 'rtl' : 'ltr'}
                 placeholder={currentSourceInfo.placeholder}
                 className={`w-full h-full bg-transparent resize-none text-white text-base sm:text-lg focus:outline-none placeholder-slate-600 leading-relaxed ${currentSourceInfo.fontClass}`}
